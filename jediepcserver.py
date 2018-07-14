@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-
 """
 Jedi EPC server.
 
@@ -30,21 +29,31 @@ import sys
 import re
 import itertools
 import logging
-import site
-import glob
+from functools import partial
+
 
 jedi = None  # I will load it later
-
-
 PY3 = (sys.version_info[0] >= 3)
 NEED_ENCODE = not PY3
 
 
-def jedi_script(source, line, column, source_path):
+def _jedi_script_default(source, line, column, source_path, environment=None):
     if NEED_ENCODE:
         source = source.encode('utf-8')
         source_path = source_path and source_path.encode('utf-8')
-    return jedi.Script(source, line, column, source_path or '')
+    return jedi.Script(source, line, column, source_path or '', environment=environment)
+
+
+jedi_script = _jedi_script_default  # singleton
+
+
+def bind_jedi_virtual_env(venv_path, default=_jedi_script_default, logger=None):
+    global jedi_script
+    environment = jedi.create_environment(venv_path)
+    if logger is not None:
+        logger.info("using environment %s", environment)
+    jedi_script = partial(default, environment=environment)
+    return jedi_script
 
 
 def candidate_symbol(comp):
@@ -211,15 +220,10 @@ def path_expand_vars_and_user(p):
 
 
 def jedi_epc_server(address='localhost', port=0, port_file=sys.stdout,
-                    sys_path=[], virtual_env=[],
+                    sys_path=[], virtual_env=None,
                     debugger=None, log=None, log_level=None,
                     log_traceback=None):
-    default_venv = os.getenv('VIRTUAL_ENV')
-    if default_venv:
-        add_virtualenv_path(default_venv)
 
-    for p in virtual_env:
-        add_virtualenv_path(path_expand_vars_and_user(p))
     sys_path = map(path_expand_vars_and_user, sys_path)
     sys.path = [''] + list(filter(None, itertools.chain(sys_path, sys.path)))
     # Workaround Jedi's module cache.  Use this workaround until Jedi
@@ -266,6 +270,9 @@ def jedi_epc_server(address='localhost', port=0, port_file=sys.stdout,
         server.logger.addHandler(handler)
         server.logger.setLevel(logging.DEBUG)
 
+    if virtual_env is not None:
+        bind_jedi_virtual_env(virtual_env, logger=server.logger)
+
     return server
 
 
@@ -273,15 +280,6 @@ def import_jedi():
     global jedi
     import jedi
     import jedi.api
-
-
-def add_virtualenv_path(venv):
-    """Add virtualenv's site-packages to `sys.path`."""
-    venv = os.path.abspath(venv)
-    paths = glob.glob(os.path.join(
-        venv, 'lib', 'python*', 'site-packages'))
-    for path in paths:
-        site.addsitedir(path)
 
 
 def main(args=None):
@@ -300,7 +298,7 @@ def main(args=None):
         '--sys-path', '-p', default=[], action='append',
         help='paths to be inserted at the top of `sys.path`.')
     parser.add_argument(
-        '--virtual-env', '-v', default=[], action='append',
+        '--virtual-env', '-v', default=None,
         help='paths to be used as if VIRTUAL_ENV is set to it.')
     parser.add_argument(
         '--log', help='save server log to this file.')
