@@ -47,9 +47,11 @@ def _jedi_script_default(source, line, column, source_path, environment=None):
 jedi_script = _jedi_script_default  # singleton
 
 
-def bind_jedi_virtual_env(venv_path, default=_jedi_script_default):
+def bind_jedi_virtual_env(venv_path, default=_jedi_script_default, logger=None):
     global jedi_script
     environment = jedi.create_environment(venv_path)
+    if logger is not None:
+        logger.info("using environment %s", environment)
     jedi_script = partial(default, environment=environment)
     return jedi_script
 
@@ -222,9 +224,6 @@ def jedi_epc_server(address='localhost', port=0, port_file=sys.stdout,
                     debugger=None, log=None, log_level=None,
                     log_traceback=None):
 
-    if virtual_env is not None:
-        bind_jedi_virtual_env(virtual_env)
-
     sys_path = map(path_expand_vars_and_user, sys_path)
     sys.path = [''] + list(filter(None, itertools.chain(sys_path, sys.path)))
     # Workaround Jedi's module cache.  Use this workaround until Jedi
@@ -270,6 +269,9 @@ def jedi_epc_server(address='localhost', port=0, port_file=sys.stdout,
         handler.setLevel(logging.DEBUG)
         server.logger.addHandler(handler)
         server.logger.setLevel(logging.DEBUG)
+
+    if virtual_env is not None:
+        bind_jedi_virtual_env(virtual_env, logger=server.logger)
 
     return server
 
